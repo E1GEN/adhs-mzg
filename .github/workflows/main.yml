@@ -2,8 +2,8 @@ name: Mastodon zu Gotify
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # Alle 15 Minuten
-  workflow_dispatch:  # Erlaubt manuelles Auslösen
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 jobs:
   check-feed:
@@ -12,67 +12,90 @@ jobs:
     steps:
       - name: Repository auschecken
         uses: actions/checkout@v4
-
-      - name: xmllint installieren
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxml2-utils
       
-          - name: RSS-Feed prüfen und zu Gotify senden
-            env:
-              GOTIFY_TOKEN: ${{ secrets.GOTIFY_TOKEN }}
-            run: |
-              RSS_URL="https://mastodon.de/@adhs_mzg.rss"
-              
-              echo "=== Abrufen des RSS-Feeds ==="
-              LATEST_LINK=$(curl -s "$RSS_URL" | xmllint --xpath "//item[1]/link/text()" - 2>/dev/null)
-              
-              # Versuche zuerst title, dann description
-              LATEST_TITLE=$(curl -s "$RSS_URL" | xmllint --xpath "//item[1]/title/text()" - 2>/dev/null)
-              if [ -z "$LATEST_TITLE" ]; then
-                LATEST_TITLE=$(curl -s "$RSS_URL" | xmllint --xpath "//item[1]/description/text()" - 2>/dev/null | sed 's/<[^>]*>//g')
-              fi
-              
-              # Titel kürzen falls zu lang
-              LATEST_TITLE=$(echo "$LATEST_TITLE" | head -c 1000)
-              
-              echo "Neuester Link: $LATEST_LINK"
-              echo "Neuester Titel: $LATEST_TITLE"
-              
-              if [ -f last_post.txt ]; then
-                LAST_LINK=$(cat last_post.txt)
-                echo "Letzter gespeicherter Link: $LAST_LINK"
-              else
-                LAST_LINK=""
-                echo "Keine last_post.txt gefunden"
-              fi
-              
-              if [ "$LATEST_LINK" != "$LAST_LINK" ] && [ -n "$LATEST_LINK" ]; then
-                echo "=== NEUER BEITRAG ERKANNT! ==="
-                
-                # Fallback falls Titel immer noch leer
-                if [ -z "$LATEST_TITLE" ]; then
-                  LATEST_TITLE="Neuer Beitrag (kein Titel verfügbar)"
-                fi
-                
-                echo "Sende zu Gotify..."
-                curl "https://push.adminforge.de/message?token=$GOTIFY_TOKEN" \
-                  -F "title=ADHS-MZG Selbsthilfe" \
-                  -F "message=$LATEST_TITLE" \
-                  -F "priority=5" \
-                  -F "extras={\"client::notification\":{\"click\":{\"url\":\"$LATEST_LINK\"}}}"
-                
-                echo "$LATEST_LINK" > last_post.txt
-                echo "✓ Gespeichert!"
-              else
-                echo "=== Kein neuer Beitrag ==="
-              fi
-
-      
-      - name: Status speichern
+      - name: RSS-Feed prüfen und zu Gotify senden
+        env:
+          GOTIFY_TOKEN: ${{ secrets.GOTIFY_TOKEN }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add last_post.txt || true
-          git diff --quiet && git diff --staged --quiet || git commit -m "Update last post"
-          git push || true
+          python3 << 'EOF'
+          import urllib.request
+          import xml.etree.ElementTree as ET
+          import json
+          import os
+          import html
+          import re
+          
+          RSS_URL = "https://mastodon.de/@adhs_mzg.rss"
+          GOTIFY_TOKEN = os.environ['GOTIFY_TOKEN']
+          STATE_FILE = "last_post.txt"
+          
+          print("=== Abrufen des RSS-Feeds ===")
+          
+          # RSS-Feed abrufen
+          with urllib.request.urlopen(RSS_URL) as response:
+              tree = ET.parse(response)
+          
+          # Neuesten Beitrag finden
+          item = tree.find('.//item')
+          if item is None:
+              print("Keine Items im Feed gefunden!")
+              exit(0)
+          
+          latest_link = item.find('link').text
+          
+          # Title oder Description nutzen
+          title_elem = item.find('title')
+          desc_elem = item.find('description')
+          
+          if title_elem is not None and title_elem.text:
+              latest_title = title_elem.text
+          elif desc_elem is not None and desc_elem.text:
+              latest_title = desc_elem.text
+          else:
+              latest_title = "Neuer Beitrag"
+          
+          # HTML-Tags entfernen und HTML-Entities dekodieren
+          latest_title = re.sub('<[^<]+?>', '', latest_title)
+          latest_title = html.unescape(latest_title)
+          latest_title = latest_title.strip()[:500]  # Auf 500 Zeichen kürzen
+          
+          print(f"Neuester Link: {latest_link}")
+          print(f"Neuester Titel: {latest_title}")
+          
+          # Letzten gespeicherten Beitrag laden
+          try:
+              with open(STATE_FILE, 'r') as f:
+                  last_link = f.read().strip()
+              print(f"Letzter gespeicherter Link: {last_link}")
+          except FileNotFoundError:
+              last_link = ""
+              print("Keine last_post.txt gefunden - erster Lauf")
+          
+          # Vergleichen und senden
+          if latest_link != last_link and latest_link:
+              print("=== NEUER BEITRAG ERKANNT! ===")
+              print("Sende zu Gotify...")
+              
+              # Gotify-Request vorbereiten
+              url = f"https://push.adminforge.de/message?token={GOTIFY_TOKEN}"
+              
+              data = {
+                  'title': 'Neuer Mastodon-Beitrag',
+                  'message': latest_title,
+                  'priority': 5,
+                  'extras': {
+                      'client::notification': {
+                          'click': {
+                              'url': latest_link
+                          }
+                      }
+                  }
+              }
+              
+              # Als multipart/form-data senden
+              boundary = '----WebKitFormBoundary' + '1234567890'
+              body = []
+              
+              for key, value in [('title', data['title']), ('message', data['message']), ('priority', str(data['priority']))]:
+                  body.append(f'--{boundary}'.encode())
+                  body.ap
