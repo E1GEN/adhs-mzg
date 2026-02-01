@@ -18,16 +18,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxml2-utils
       
-      - name: RSS-Feed prüfen und zu Gotify senden
-        env:
-          GOTIFY_TOKEN: ${{ secrets.GOTIFY_TOKEN }}
-        run: |
-          # Mastodon RSS-Feed URL
-          RSS_URL="https://mastodon.de/@adhs_mzg.rss"
-          
-          # Neuesten Beitrag abrufen
-          LATEST_LINK=$(curl -s "$RSS_URL" | xmllint --xpath "//item[1]/link/text()" - 2>/dev/null)
-          LATEST_TITLE=$(curl -s "$RSS_URL" | xmllint --xpath "//item[1]/title/text()" - 2>/dev/null | sed 's/<[^>]*>//g')
+          - name: RSS-Feed prüfen und zu Gotify senden
+            env:
+              GOTIFY_TOKEN: ${{ secrets.GOTIFY_TOKEN }}
+            run: |
+              RSS_URL="https://deine-instanz/@deinusername.rss"
+              
+              # Python statt xmllint verwenden
+              LATEST=$(python3 -c "
+          import urllib.request
+          import xml.etree.ElementTree as ET
+          with urllib.request.urlopen('$RSS_URL') as response:
+              tree = ET.parse(response)
+              item = tree.find('.//item')
+              print(item.find('link').text + '|' + item.find('title').text)
+          ")
+    
+              LATEST_LINK=$(echo "$LATEST" | cut -d'|' -f1)
+              LATEST_TITLE=$(echo "$LATEST" | cut -d'|' -f2 | sed 's/<[^>]*>//g')
           
           # Letzten gespeicherten Beitrag laden
           if [ -f last_post.txt ]; then
