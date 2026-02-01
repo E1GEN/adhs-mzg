@@ -34,7 +34,6 @@ jobs:
           
           try:
               print("=== Abrufen des RSS-Feeds ===")
-              print(f"RSS URL: {RSS_URL}")
               
               # RSS-Feed abrufen
               req = urllib.request.Request(RSS_URL, headers={'User-Agent': 'Mozilla/5.0'})
@@ -46,17 +45,24 @@ jobs:
               # Neuesten Beitrag finden
               item = tree.find('.//item')
               if item is None:
-                  print("⚠ Keine Items im Feed gefunden - beende ohne Fehler")
+                  print("⚠ Keine Items im Feed gefunden")
                   sys.exit(0)
               
-              # Link extrahieren
+              # Link extrahieren (zuerst link, dann guid als Fallback)
+              latest_link = None
               link_elem = item.find('link')
-              if link_elem is None or not link_elem.text:
-                  print("✗ Kein Link im Item gefunden!")
-                  sys.exit(1)
-              latest_link = link_elem.text.strip()
+              if link_elem is not None and link_elem.text:
+                  latest_link = link_elem.text.strip()
+              else:
+                  guid_elem = item.find('guid')
+                  if guid_elem is not None and guid_elem.text:
+                      latest_link = guid_elem.text.strip()
               
-              # Title oder Description nutzen
+              if not latest_link:
+                  print("✗ Kein Link gefunden!")
+                  sys.exit(1)
+              
+              # Title oder Description
               latest_title = None
               title_elem = item.find('title')
               desc_elem = item.find('description')
@@ -65,81 +71,68 @@ jobs:
                   latest_title = title_elem.text
               elif desc_elem is not None and desc_elem.text:
                   latest_title = desc_elem.text
-              
-              if not latest_title:
+              else:
                   latest_title = "Neuer Beitrag"
               
-              # HTML-Tags entfernen und HTML-Entities dekodieren
+              # HTML bereinigen
               latest_title = re.sub('<[^<]+?>', '', latest_title)
               latest_title = html.unescape(latest_title)
               latest_title = latest_title.strip()[:500]
               
-              print(f"Neuester Link: {latest_link}")
-              print(f"Neuester Titel: {latest_title[:100]}...")
+              print(f"Link: {latest_link}")
+              print(f"Titel: {latest_title[:100]}...")
               
-              # Letzten gespeicherten Beitrag laden
+              # Letzten Beitrag laden
               try:
                   with open(STATE_FILE, 'r') as f:
                       last_link = f.read().strip()
-                  print(f"Letzter gespeicherter Link: {last_link}")
+                  print(f"Letzter Link: {last_link}")
               except FileNotFoundError:
                   last_link = ""
-                  print("Keine last_post.txt gefunden - erster Lauf")
+                  print("Erster Lauf")
               
-              # Vergleichen und senden
+              # Vergleichen
               if latest_link == last_link:
                   print("=== Kein neuer Beitrag ===")
                   sys.exit(0)
               
-              if not latest_link:
-                  print("✗ Latest Link ist leer!")
-                  sys.exit(1)
-              
-              print("=== NEUER BEITRAG ERKANNT! ===")
+              print("=== NEUER BEITRAG! ===")
               print("Sende zu Gotify...")
               
-              # Gotify-Request als JSON
-              data = json.dumps({
-                  'title': 'ADHS-MZG Selbsthilfe',
-                  'message': latest_title,
-                  'priority': 5,
-                  'extras': {
-                      'client::notification': {
-                          'click': {
-                              'url': latest_link
-                          }
+              # Gotify mit Form-Data (extras als JSON-String im Form-Field)
+              import urllib.parse
+              
+              extras_json = json.dumps({
+                  'client::notification': {
+                      'click': {
+                          'url': latest_link
                       }
                   }
+              })
+              
+              data = urllib.parse.urlencode({
+                  'title': 'ADHS-MZG Selbsthilfe',
+                  'message': latest_title,
+                  'priority': '5',
+                  'extras': extras_json
               }).encode('utf-8')
               
               req = urllib.request.Request(
                   f"{GOTIFY_URL}?token={GOTIFY_TOKEN}",
                   data=data,
-                  headers={'Content-Type': 'application/json'}
+                  headers={'Content-Type': 'application/x-www-form-urlencoded'}
               )
               
               with urllib.request.urlopen(req, timeout=10) as response:
-                  resp_data = response.read().decode('utf-8')
-                  print(f"✓ Gotify Response Code: {response.status}")
-                  print(f"Response: {resp_data}")
+                  print(f"✓ Gotify Response: {response.status}")
               
               # Speichern
               with open(STATE_FILE, 'w') as f:
                   f.write(latest_link)
-              print("✓ Erfolgreich gespeichert!")
+              print("✓ Gespeichert!")
               
-          except urllib.error.HTTPError as e:
-              print(f"✗ HTTP-Fehler: {e.code} - {e.reason}")
-              print(f"URL: {e.url}")
-              sys.exit(1)
-          except urllib.error.URLError as e:
-              print(f"✗ URL-Fehler: {e.reason}")
-              sys.exit(1)
-          except ET.ParseError as e:
-              print(f"✗ XML-Parsing-Fehler: {e}")
-              sys.exit(1)
           except Exception as e:
-              print(f"✗ Unerwarteter Fehler: {type(e).__name__}: {e}")
+              print(f"✗ Fehler: {type(e).__name__}: {e}")
               import traceback
               traceback.print_exc()
               sys.exit(1)
