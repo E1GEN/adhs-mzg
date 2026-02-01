@@ -99,32 +99,32 @@ jobs:
               print("=== NEUER BEITRAG! ===")
               print("Sende zu Gotify...")
               
-              # Gotify mit Form-Data (extras als JSON-String im Form-Field)
-              import urllib.parse
-              
-              extras_json = json.dumps({
-                  'client::notification': {
-                      'click': {
-                          'url': latest_link
+              # Gotify mit JSON (WICHTIG: extras funktioniert NUR mit JSON!)
+              payload = {
+                  "title": "ADHS-MZG Selbsthilfe",
+                  "message": latest_title,
+                  "priority": 5,
+                  "extras": {
+                      "client::notification": {
+                          "click": {
+                              "url": latest_link
+                          }
                       }
                   }
-              })
+              }
               
-              data = urllib.parse.urlencode({
-                  'title': 'ADHS-MZG Selbsthilfe',
-                  'message': latest_title,
-                  'priority': '5',
-                  'extras': extras_json
-              }).encode('utf-8')
+              data = json.dumps(payload).encode('utf-8')
               
               req = urllib.request.Request(
                   f"{GOTIFY_URL}?token={GOTIFY_TOKEN}",
                   data=data,
-                  headers={'Content-Type': 'application/x-www-form-urlencoded'}
+                  headers={'Content-Type': 'application/json'}
               )
               
               with urllib.request.urlopen(req, timeout=10) as response:
+                  resp = response.read().decode('utf-8')
                   print(f"✓ Gotify Response: {response.status}")
+                  print(f"Response Data: {resp}")
               
               # Speichern
               with open(STATE_FILE, 'w') as f:
