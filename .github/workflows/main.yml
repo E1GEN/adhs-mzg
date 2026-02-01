@@ -22,43 +22,52 @@ jobs:
             env:
               GOTIFY_TOKEN: ${{ secrets.GOTIFY_TOKEN }}
             run: |
-              RSS_URL="https://deine-instanz/@deinusername.rss"
+              RSS_URL="https://mastodon.de/@adhs_mzg.rss"
               
-              # Python statt xmllint verwenden
-              LATEST=$(python3 -c "
-          import urllib.request
-          import xml.etree.ElementTree as ET
-          with urllib.request.urlopen('$RSS_URL') as response:
-              tree = ET.parse(response)
-              item = tree.find('.//item')
-              print(item.find('link').text + '|' + item.find('title').text)
-          ")
-    
-              LATEST_LINK=$(echo "$LATEST" | cut -d'|' -f1)
-              LATEST_TITLE=$(echo "$LATEST" | cut -d'|' -f2 | sed 's/<[^>]*>//g')
-          
-          # Letzten gespeicherten Beitrag laden
-          if [ -f last_post.txt ]; then
-            LAST_LINK=$(cat last_post.txt)
-          else
-            LAST_LINK=""
-          fi
-          
-          # Wenn neuer Beitrag, zu Gotify senden
-          if [ "$LATEST_LINK" != "$LAST_LINK" ] && [ -n "$LATEST_LINK" ]; then
-            echo "Neuer Beitrag gefunden: $LATEST_TITLE"
-            
-            curl "https://push.adminforge.de/message?token=$GOTIFY_TOKEN" \
-              -F "title=ADHS-MZG Selbsthilfe" \
-              -F "message=$LATEST_TITLE" \
-              -F "priority=5" \
-              -F "extras={\"client::notification\":{\"click\":{\"url\":\"$LATEST_LINK\"}}}"
-            
-            # Aktuellen Beitrag speichern
-            echo "$LATEST_LINK" > last_post.txt
-          else
-            echo "Kein neuer Beitrag gefunden."
-          fi
+              echo "=== Abrufen des RSS-Feeds ==="
+              LATEST_LINK=$(curl -s "$RSS_URL" | xmllint --xpath "//item[1]/link/text()" - 2>/dev/null)
+              
+              # Versuche zuerst title, dann description
+              LATEST_TITLE=$(curl -s "$RSS_URL" | xmllint --xpath "//item[1]/title/text()" - 2>/dev/null)
+              if [ -z "$LATEST_TITLE" ]; then
+                LATEST_TITLE=$(curl -s "$RSS_URL" | xmllint --xpath "//item[1]/description/text()" - 2>/dev/null | sed 's/<[^>]*>//g')
+              fi
+              
+              # Titel kürzen falls zu lang
+              LATEST_TITLE=$(echo "$LATEST_TITLE" | head -c 1000)
+              
+              echo "Neuester Link: $LATEST_LINK"
+              echo "Neuester Titel: $LATEST_TITLE"
+              
+              if [ -f last_post.txt ]; then
+                LAST_LINK=$(cat last_post.txt)
+                echo "Letzter gespeicherter Link: $LAST_LINK"
+              else
+                LAST_LINK=""
+                echo "Keine last_post.txt gefunden"
+              fi
+              
+              if [ "$LATEST_LINK" != "$LAST_LINK" ] && [ -n "$LATEST_LINK" ]; then
+                echo "=== NEUER BEITRAG ERKANNT! ==="
+                
+                # Fallback falls Titel immer noch leer
+                if [ -z "$LATEST_TITLE" ]; then
+                  LATEST_TITLE="Neuer Beitrag (kein Titel verfügbar)"
+                fi
+                
+                echo "Sende zu Gotify..."
+                curl "https://push.adminforge.de/message?token=$GOTIFY_TOKEN" \
+                  -F "title=ADHS-MZG Selbsthilfe" \
+                  -F "message=$LATEST_TITLE" \
+                  -F "priority=5" \
+                  -F "extras={\"client::notification\":{\"click\":{\"url\":\"$LATEST_LINK\"}}}"
+                
+                echo "$LATEST_LINK" > last_post.txt
+                echo "✓ Gespeichert!"
+              else
+                echo "=== Kein neuer Beitrag ==="
+              fi
+
       
       - name: Status speichern
         run: |
